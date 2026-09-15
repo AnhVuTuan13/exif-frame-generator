@@ -56,15 +56,23 @@ function rerender() {
 }
 
 async function onFileSelected(file) {
+  // 1. Load + draw the image immediately — this must never depend on EXIF,
+  //    otherwise a slow/failed EXIF read would silently freeze the preview.
   await loadImageFromFile(file);
-
-  const exif = await readExif(file);
-  if (exif.brandKey) selectedBrand.value = exif.brandKey;
-  if (exif.modelText) modelText.value = exif.modelText;
-  if (exif.paramsText) paramsText.value = exif.paramsText;
-  if (exif.subText) subText.value = exif.subText;
-
   rerender();
+
+  // 2. Try to read EXIF as a progressive enhancement. Any failure or hang
+  //    here only skips auto-filled fields, it never blocks the image.
+  try {
+    const exif = await readExif(file);
+    if (exif.brandKey) selectedBrand.value = exif.brandKey;
+    if (exif.modelText) modelText.value = exif.modelText;
+    if (exif.paramsText) paramsText.value = exif.paramsText;
+    if (exif.subText) subText.value = exif.subText;
+    rerender();
+  } catch (err) {
+    console.warn('Không đọc được EXIF của ảnh này:', err);
+  }
 }
 
 onMounted(() => {
