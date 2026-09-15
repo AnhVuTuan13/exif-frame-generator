@@ -81,8 +81,9 @@ trong lưới chọn mẫu.
 
 ## Ghi chú
 
-- EXIF được đọc bằng thư viện `exif-js`; nếu ảnh không có EXIF, các trường sẽ
-  giữ giá trị người dùng tự nhập.
+- EXIF được đọc bằng thư viện `exifr` (thay cho `exif-js` cũ — vốn có bug
+  ReferenceError khi chạy ở strict mode/ESM); nếu ảnh không có EXIF, các
+  trường sẽ giữ giá trị người dùng tự nhập.
 - Logo hãng máy được tải dưới dạng SVG rồi tô lại màu trắng bằng cách thay
   thuộc tính `fill`, sau đó cache trong bộ nhớ theo cặp (hãng, màu) để tránh
   tải lại nhiều lần.

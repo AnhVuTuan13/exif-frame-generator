@@ -1,4 +1,4 @@
-import EXIF from 'exif-js';
+import exifr from 'exifr';
 
 export const BRAND_LOGOS = {
   nikon: 'https://images.contentstack.io/v3/assets/blt0e5ec1de4817c440/bltf00f95fc75d3ad2e/65dcd55ceb46a6e99e7e8089/_nikon-logo-tm.svg',
@@ -19,86 +19,70 @@ export const BRAND_OPTIONS = [
   { value: 'custom', label: 'Chữ tự nhập' }
 ];
 
-function parseRational(val) {
-  if (!val) return null;
-  if (typeof val === 'number') return val;
-  if (val.numerator && val.denominator) return val.numerator / val.denominator;
-  return parseFloat(val);
-}
-
 const EMPTY_RESULT = { brandKey: null, modelText: '', paramsText: '', subText: '' };
+
+// Only pull the tags this app actually renders — keeps exifr fast since it
+// doesn't have to parse the whole EXIF/XMP/IPTC tree.
+const PICK_TAGS = ['Make', 'Model', 'FocalLength', 'FNumber', 'ExposureTime', 'ISO', 'DateTimeOriginal'];
+
+function pad2(n) {
+  return String(n).padStart(2, '0');
+}
 
 /**
  * Read EXIF metadata from a File and resolve to a plain object of the fields
  * this app cares about, already formatted as display strings.
  *
- * Never rejects and never hangs: if exif-js is missing, throws, or simply
- * never calls its callback (seen on some file types/browsers), this resolves
- * with EMPTY_RESULT instead so callers can safely `await` it.
+ * Never rejects: if the file has no EXIF (common for screenshots, re-saved
+ * or messaging-app-compressed images) or parsing fails for any reason, this
+ * resolves with EMPTY_RESULT instead so callers can safely `await` it.
  */
-export function readExif(file) {
-  const readPromise = new Promise((resolve) => {
-    if (typeof EXIF === 'undefined' || typeof EXIF.getData !== 'function') {
-      console.warn('exif-js chưa sẵn sàng (EXIF.getData không phải là hàm).');
-      resolve(EMPTY_RESULT);
-      return;
+export async function readExif(file) {
+  let tags;
+  try {
+    tags = await exifr.parse(file, { pick: PICK_TAGS });
+  } catch (err) {
+    console.warn('Không đọc được EXIF của ảnh này:', err);
+    return EMPTY_RESULT;
+  }
+
+  if (!tags) {
+    console.info('Ảnh này không có dữ liệu EXIF (hoặc đã bị xoá khi lưu/chia sẻ).');
+    return EMPTY_RESULT;
+  }
+
+  const {
+    Make: make = '',
+    Model: model = '',
+    FocalLength: focal,
+    FNumber: fNumber,
+    ExposureTime: exposure,
+    ISO: iso,
+    DateTimeOriginal: dateTime
+  } = tags;
+
+  let brandKey = null;
+  if (make) {
+    const lowerMake = make.toLowerCase();
+    for (const key in BRAND_LOGOS) {
+      if (lowerMake.includes(key)) { brandKey = key; break; }
     }
+  }
 
-    try {
-      EXIF.getData(file, function () {
-        try {
-          const make = EXIF.getTag(this, 'Make') || '';
-          const model = EXIF.getTag(this, 'Model') || '';
-          const focal = parseRational(EXIF.getTag(this, 'FocalLength'));
-          const fNumber = parseRational(EXIF.getTag(this, 'FNumber'));
-          const exposure = parseRational(EXIF.getTag(this, 'ExposureTime'));
-          const iso = EXIF.getTag(this, 'ISOSpeedRatings');
-          const dateTime = EXIF.getTag(this, 'DateTimeOriginal') || '';
+  const modelText = model ? model.replace(make, '').trim() : '';
 
-          let brandKey = null;
-          if (make) {
-            const lowerMake = make.toLowerCase();
-            for (const key in BRAND_LOGOS) {
-              if (lowerMake.includes(key)) { brandKey = key; break; }
-            }
-          }
+  const fText = fNumber ? `f/${fNumber.toFixed(1)}` : '';
+  const expText = exposure
+    ? (exposure < 1 ? `1/${Math.round(1 / exposure)}s` : `${exposure}s`)
+    : '';
+  const paramsText = [focal ? `${Math.round(focal)}mm` : '', fText, expText, iso ? `ISO${iso}` : '']
+    .filter(Boolean)
+    .join('  ');
 
-          const modelText = model ? model.replace(make, '').trim() : '';
+  let subText = '';
+  if (dateTime instanceof Date && !isNaN(dateTime)) {
+    subText = `${dateTime.getFullYear()}.${pad2(dateTime.getMonth() + 1)}.${pad2(dateTime.getDate())}`;
+  }
 
-          const fText = fNumber ? `f/${fNumber.toFixed(1)}` : '';
-          const expText = exposure
-            ? (exposure < 1 ? `1/${Math.round(1 / exposure)}s` : `${exposure}s`)
-            : '';
-          const paramsText = [focal ? `${Math.round(focal)}mm` : '', fText, expText, iso ? `ISO${iso}` : '']
-            .filter(Boolean)
-            .join('  ');
-
-          let subText = '';
-          if (dateTime) {
-            const parts = dateTime.split(' ')[0].split(':');
-            if (parts.length === 3) subText = `${parts[0]}.${parts[1]}.${parts[2]}`;
-          }
-
-          if (!make && !model && !focal && !fNumber && !exposure && !iso && !dateTime) {
-            console.info('Ảnh này không có dữ liệu EXIF (hoặc đã bị xoá khi lưu/chia sẻ).');
-          }
-
-          resolve({ brandKey, modelText, paramsText, subText });
-        } catch (err) {
-          console.warn('Lỗi khi phân tích dữ liệu EXIF:', err);
-          resolve(EMPTY_RESULT);
-        }
-      });
-    } catch (err) {
-      console.warn('exif-js ném lỗi khi gọi getData:', err);
-      resolve(EMPTY_RESULT);
-    }
-  });
-
-  // Safety net: some files/browsers never invoke exif-js's callback at all.
-  const timeoutPromise = new Promise((resolve) => {
-    setTimeout(() => resolve(EMPTY_RESULT), 4000);
-  });
-
-  return Promise.race([readPromise, timeoutPromise]);
+  return { brandKey, modelText, paramsText, subText };
 }
